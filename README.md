@@ -1,2 +1,2 @@
-# Gelecek-Rotasi-360
-Gelecek Rotası 360-VR Destekli kariyer Rehberliği Platformu
+# Gelecek-Rotasi-
+Gelecek Rotası-VR Meslek Keşif Platformu
