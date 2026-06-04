@@ -5,15 +5,19 @@
 function generateId(prefix) { return prefix + '-' + Date.now() + '-' + Math.floor(Math.random()*9000+1000); }
 
 function createStudent(firstName, lastName, password) {
-  if(!firstName || !lastName || !password) return { ok:false, message:'Tüm alanları doldurun.' };
-  const username = `${firstName.trim().toLowerCase()}.${lastName.trim().toLowerCase()}`;
+  // Allow single-name usernames: lastName is optional.
+  if (!firstName || !password) return { ok:false, message:'Kullanıcı adı ve şifre gerekli.' };
+  const fn = String(firstName).trim().toLowerCase();
+  const ln = lastName ? String(lastName).trim().toLowerCase() : '';
+  // If last name provided, use 'first.last', otherwise use single username
+  const username = ln ? `${fn}.${ln}` : fn;
   const students = storage.getStudents();
-  if (students.find(s => s.username === username)) return { ok:false, message:'Aynı isimde kullanıcı zaten var. Farklı bir ad deneyin.' };
+  if (students.find(s => s.username === username)) return { ok:false, message:'Aynı kullanıcı adı zaten var. Farklı bir ad deneyin.' };
   // Danışman ataması: ilk danışman varsa ona ata
   const advisors = storage.getAdvisors();
   let advisorId = advisors.length > 0 ? advisors[0].id : null;
   const id = generateId('s');
-  students.push({ id, firstName, lastName, username, password, advisorId });
+  students.push({ id, firstName: fn, lastName: ln, username, password, advisorId });
   storage.saveStudents(students);
   return { ok:true, message:'Kayıt başarılı.', id, username };
 }
