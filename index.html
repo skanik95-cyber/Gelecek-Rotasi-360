@@ -429,7 +429,8 @@
                                                 <tr>
                                                     <th>Tarih</th>
                                                     <th>En Güçlü Alanlar</th>
-                                                    <th>Önerilen Meslek Sayısı</th>
+                                                    <th>Önerilen Meslekler</th>
+                                                    <th>İşlem</th>
                                                 </tr>
                                             </thead>
                                             <tbody id="advisor-results-list">
@@ -1787,32 +1788,76 @@
                     listBody.innerHTML = '<tr><td colspan="3">Danışman bulunamadı.</td></tr>';
                     return;
                 }
+
+                // Ayır: atanmış ve atanmamış öğrenciler
                 const myStudents = students.filter(s => s.advisorId === currentAdvisor.id);
+                const unassigned = students.filter(s => !s.advisorId || s.advisorId === null);
+
+                listBody.innerHTML = '';
+
+                // Display assigned students first
                 if (myStudents.length === 0) {
                     listBody.innerHTML = '<tr><td colspan="3">Atanmış öğrenci bulunamadı.</td></tr>';
-                    return;
-                }
-                listBody.innerHTML = '';
-                myStudents.forEach(student => {
-                    // Son test sonucu ve toplam test sayısı (local)
-                    const results = (window.storage && window.storage.getResults && window.storage.getResults()) || [];
-                    const studentResults = results.filter(r => r.studentId === student.id);
-                    const latestResult = studentResults.length > 0 ? studentResults[studentResults.length-1] : null;
-                    const row = document.createElement('tr');
-                    row.classList.add('advisor-row');
-                    row.dataset.studentId = student.id;
-                    row.innerHTML = `
-                        <td>${student.username || 'Öğrenci'}</td>
-                        <td>${latestResult ? getReadableDate(latestResult.date) : '-'}</td>
-                        <td>${studentResults.length}</td>
-                    `;
-                    row.addEventListener('click', () => {
-                        document.querySelectorAll('.advisor-row').forEach(item => item.classList.remove('active'));
-                        row.classList.add('active');
-                        // local detay fonksiyonu eklenebilir
+                } else {
+                    myStudents.forEach(student => {
+                        const results = (window.storage && window.storage.getResults && window.storage.getResults()) || [];
+                        const studentResults = results.filter(r => r.studentId === student.id);
+                        const latestResult = studentResults.length > 0 ? studentResults[studentResults.length-1] : null;
+                        const row = document.createElement('tr');
+                        row.classList.add('advisor-row');
+                        row.dataset.studentId = student.id;
+                        row.innerHTML = `
+                            <td>${student.username || 'Öğrenci'}</td>
+                            <td>${latestResult ? getReadableDate(latestResult.date) : '-'}</td>
+                            <td>${studentResults.length}</td>
+                        `;
+                        row.addEventListener('click', () => {
+                            document.querySelectorAll('.advisor-row').forEach(item => item.classList.remove('active'));
+                            row.classList.add('active');
+                            // Load details for this student (localStorage mode)
+                            try { loadAdvisorStudentDetails(student.id, student.username || 'Öğrenci'); } catch (e) { console.error('loadAdvisorStudentDetails failed', e); }
+                        });
+                        listBody.appendChild(row);
                     });
-                    listBody.appendChild(row);
-                });
+                }
+
+                // Then list unassigned students with an "Ata" button
+                if (unassigned.length > 0) {
+                    // separator row
+                    const sep = document.createElement('tr');
+                    sep.innerHTML = '<td colspan="3" style="padding-top:12px"><strong>Atanmamış Öğrenciler</strong></td>';
+                    listBody.appendChild(sep);
+
+                    unassigned.forEach(student => {
+                        const results = (window.storage && window.storage.getResults && window.storage.getResults()) || [];
+                        const studentResults = results.filter(r => r.studentId === student.id);
+                        const latestResult = studentResults.length > 0 ? studentResults[studentResults.length-1] : null;
+                        const row = document.createElement('tr');
+                        row.classList.add('advisor-row');
+                        row.dataset.studentId = student.id;
+                        row.innerHTML = `
+                            <td>${student.username || 'Öğrenci'}</td>
+                            <td>${latestResult ? getReadableDate(latestResult.date) : '-'}</td>
+                            <td><button class="btn btn-sm btn-primary assign-btn" data-student-id="${student.id}">Ata</button></td>
+                        `;
+                        listBody.appendChild(row);
+                    });
+
+                    // Attach assign handlers
+                    listBody.querySelectorAll('.assign-btn').forEach(btn => {
+                        btn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            const sid = btn.dataset.studentId;
+                            const idx = students.findIndex(s => s.id === sid);
+                            if (idx >= 0) {
+                                students[idx].advisorId = currentAdvisor.id;
+                                try { storage.saveStudents(students); } catch(err){ console.error('saveStudents failed', err); }
+                                // refresh view
+                                loadAdvisorDashboard();
+                            }
+                        });
+                    });
+                }
                 return;
             }
 
@@ -1856,46 +1901,125 @@
         }
 
         async function loadAdvisorStudentDetails(studentId, studentName) {
-            const nameEl = document.getElementById('advisor-student-name');
-            const metaEl = document.getElementById('advisor-student-meta');
-            const resultsBody = document.getElementById('advisor-results-list');
-            if (nameEl) nameEl.textContent = studentName;
-            if (metaEl) metaEl.textContent = 'Test sonuçları yükleniyor...';
-            if (resultsBody) resultsBody.innerHTML = '<tr><td colspan="3">Sonuçlar yükleniyor...</td></tr>';
-            try {
-                const resultsSnapshot = await db.collection('testResults')
-                    .where('userId', '==', studentId)
-                    .orderBy('createdAt', 'asc')
-                    .get();
-                if (resultsSnapshot.empty) {
-                    if (metaEl) metaEl.textContent = 'Öğrencinin henüz test sonucu yok.';
-                    if (resultsBody) resultsBody.innerHTML = '<tr><td colspan="3">Sonuç bulunamadı.</td></tr>';
-                    updateAdvisorChart([]);
-                    return;
-                }
-                const results = resultsSnapshot.docs.map(doc => doc.data());
-                if (metaEl) metaEl.textContent = `${results.length} test sonucu bulundu.`;
-                if (resultsBody) {
-                    resultsBody.innerHTML = results.map(result => {
-                        const topAreas = (result.topAreas || [])
-                            .map(area => `${area.category} (${area.score})`)
-                            .join(', ');
-                        return `
-                            <tr>
-                                <td>${getReadableDate(result.createdAt)}</td>
-                                <td>${topAreas || '-'}</td>
-                                <td>${result.recommendedCareers ? result.recommendedCareers.length : 0}</td>
-                            </tr>
-                        `;
-                    }).join('');
-                }
-                updateAdvisorChart(results);
-            } catch (error) {
-                console.error('Advisor student detail error:', error);
-                if (metaEl) metaEl.textContent = 'Sonuçlar yüklenirken hata oluştu.';
-                if (resultsBody) resultsBody.innerHTML = '<tr><td colspan="3">Sonuçlar yüklenirken hata oluştu.</td></tr>';
-                updateAdvisorChart([]);
-            }
+                    const nameEl = document.getElementById('advisor-student-name');
+                    const metaEl = document.getElementById('advisor-student-meta');
+                    const resultsBody = document.getElementById('advisor-results-list');
+                    if (nameEl) nameEl.textContent = studentName;
+                    if (metaEl) metaEl.textContent = 'Test sonuçları yükleniyor...';
+                    if (resultsBody) resultsBody.innerHTML = '<tr><td colspan="3">Sonuçlar yükleniyor...</td></tr>';
+
+                    // Local storage mode fallback
+                    if (!db || !authUser) {
+                        try {
+                            const allResults = (window.storage && window.storage.getResults && window.storage.getResults()) || [];
+                            const studentResults = allResults.filter(r => r.studentId === studentId).sort((a,b) => new Date(a.date) - new Date(b.date));
+                            if (!studentResults || studentResults.length === 0) {
+                                if (metaEl) metaEl.textContent = 'Öğrencinin henüz test sonucu yok.';
+                                if (resultsBody) resultsBody.innerHTML = '<tr><td colspan="3">Sonuç bulunamadı.</td></tr>';
+                                updateAdvisorChart([]);
+                                return;
+                            }
+                            if (metaEl) metaEl.textContent = `${studentResults.length} test sonucu bulundu.`;
+                            if (resultsBody) {
+                                resultsBody.innerHTML = studentResults.map(result => {
+                                    const scores = (result.details && result.details.categoryScores) || result.categoryScores || {};
+                                    const topAreasArr = getTopAreas(scores) || [];
+                                    const topAreas = topAreasArr.map(a => `${a.category} (${a.score})`).join(', ');
+                                    const recs = (result.details && result.details.recommendedCareers) || result.recommendedCareers || [];
+                                    const top3Names = (Array.isArray(recs) ? recs.slice(0,3).map(r => r.name || r) : []).join(', ') || '-';
+                                    const rid = result.id || result.entry && result.entry.id || result.resultId || '';
+                                    return `
+                                        <tr>
+                                            <td>${getReadableDate(result.date || result.createdAt)}</td>
+                                            <td>${topAreas || '-'}</td>
+                                            <td>${top3Names}</td>
+                                            <td><button class="btn btn-sm btn-danger result-delete-btn" data-result-id="${rid}">Sil</button></td>
+                                        </tr>
+                                    `;
+                                }).join('');
+
+                                // attach delete handlers for local results
+                                resultsBody.querySelectorAll('.result-delete-btn').forEach(btn => {
+                                    btn.addEventListener('click', (e) => {
+                                        e.stopPropagation();
+                                        const rid = btn.dataset.resultId;
+                                        if (!rid) return;
+                                        try {
+                                            const all = (window.storage && window.storage.getResults && window.storage.getResults()) || [];
+                                            const filtered = all.filter(r => r.id !== rid);
+                                            storage.saveResults(filtered);
+                                            loadAdvisorStudentDetails(studentId, studentName);
+                                        } catch (err) {
+                                            console.error('Local result delete failed', err);
+                                        }
+                                    });
+                                });
+                            }
+                            updateAdvisorChart(studentResults.map(r => ({ createdAt: r.date || r.createdAt, categoryScores: (r.details && r.details.categoryScores) || r.categoryScores || {} })));
+                            return;
+                        } catch (e) {
+                            console.error('Local advisor student detail error:', e);
+                            if (metaEl) metaEl.textContent = 'Sonuçlar yüklenirken hata oluştu.';
+                            if (resultsBody) resultsBody.innerHTML = '<tr><td colspan="3">Sonuçlar yüklenirken hata oluştu.</td></tr>';
+                            updateAdvisorChart([]);
+                            return;
+                        }
+                    }
+
+                    // Firestore (orijinal) mod
+                    try {
+                        const resultsSnapshot = await db.collection('testResults')
+                            .where('userId', '==', studentId)
+                            .orderBy('createdAt', 'asc')
+                            .get();
+                        if (resultsSnapshot.empty) {
+                            if (metaEl) metaEl.textContent = 'Öğrencinin henüz test sonucu yok.';
+                            if (resultsBody) resultsBody.innerHTML = '<tr><td colspan="3">Sonuç bulunamadı.</td></tr>';
+                            updateAdvisorChart([]);
+                            return;
+                        }
+                        const results = resultsSnapshot.docs.map(doc => ({ id: doc.id, ...(doc.data()) }));
+                        if (metaEl) metaEl.textContent = `${results.length} test sonucu bulundu.`;
+                        if (resultsBody) {
+                        resultsBody.innerHTML = results.map(result => {
+                            const topAreas = (result.topAreas || [])
+                                .map(area => `${area.category} (${area.score})`)
+                                .join(', ');
+                            const recs = result.recommendedCareers || [];
+                            const top3Names = (Array.isArray(recs) ? recs.slice(0,3).map(r => r.name || r).join(', ') : '-') || '-';
+                            return `
+                                <tr>
+                                    <td>${getReadableDate(result.createdAt)}</td>
+                                    <td>${topAreas || '-'}</td>
+                                    <td>${top3Names}</td>
+                                    <td><button class="btn btn-sm btn-danger result-delete-btn" data-result-id="${result.id}">Sil</button></td>
+                                </tr>
+                            `;
+                        }).join('');
+
+                        // attach delete handlers for firestore results
+                        resultsBody.querySelectorAll('.result-delete-btn').forEach(btn => {
+                            btn.addEventListener('click', async (e) => {
+                                e.stopPropagation();
+                                const rid = btn.dataset.resultId;
+                                if (!rid) return;
+                                try {
+                                    await db.collection('testResults').doc(rid).delete();
+                                    // reload
+                                    loadAdvisorStudentDetails(studentId, studentName);
+                                } catch (err) {
+                                    console.error('Firestore delete failed', err);
+                                }
+                            });
+                        });
+                    }
+                    updateAdvisorChart(results);
+                    } catch (error) {
+                        console.error('Advisor student detail error:', error);
+                        if (metaEl) metaEl.textContent = 'Sonuçlar yüklenirken hata oluştu.';
+                        if (resultsBody) resultsBody.innerHTML = '<tr><td colspan="3">Sonuçlar yüklenirken hata oluştu.</td></tr>';
+                        updateAdvisorChart([]);
+                    }
         }
 
         function updateAdvisorChart(results) {
